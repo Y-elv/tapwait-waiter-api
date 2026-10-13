@@ -8,7 +8,7 @@
  *       properties:
  *         id:
  *           type: string
- *           format: uuid
+ *           format: objectId
  *         restaurantId:
  *           type: string
  *         tableNumber:
@@ -21,6 +21,13 @@
  *           nullable: true
  *         waiterName:
  *           type: string
+ *           nullable: true
+ *         createdAt:
+ *           type: string
+ *           format: date-time
+ *         acceptedAt:
+ *           type: string
+ *           format: date-time
  *           nullable: true
  *
  * /api/requests:
@@ -48,17 +55,24 @@
  *         description: Invalid request body
  *   get:
  *     tags: [Waiter Requests]
- *     summary: List waiter requests
+ *     summary: List waiter requests filtered by restaurant, table, and status
  *     parameters:
  *       - in: query
  *         name: restaurantId
  *         schema:
  *           type: string
+ *         description: Filter requests by restaurant ID.
+ *       - in: query
+ *         name: tableNumber
+ *         schema:
+ *           type: string
+ *         description: Filter requests by table number.
  *       - in: query
  *         name: status
  *         schema:
  *           type: string
  *           enum: [pending, accepted]
+ *         description: Filter requests by status.
  *     responses:
  *       "200":
  *         description: Requests returned
@@ -73,7 +87,7 @@
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
+ *           format: objectId
  *     requestBody:
  *       required: true
  *       content:
@@ -99,15 +113,12 @@
 
 
 const express = require("express");
-const { randomUUID } = require("node:crypto");
+const mongoose = require("mongoose");
+const Request = require("../models/Request");
 
 const router = express.Router();
 
-// Temporary storage for development.
-// Requests will be lost when the server restarts.
-const requests = [];
-
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
   const { restaurantId, tableNumber } = req.body || {};
 
   if (
@@ -123,17 +134,10 @@ router.post("/", (req, res) => {
     });
   }
 
-  const request = {
-    id: randomUUID(),
+  const request = await Request.create({
     restaurantId: restaurantId.trim(),
     tableNumber: String(tableNumber).trim(),
-    status: "pending",
-    waiterId: null,
-    waiterName: null,
-    createdAt: new Date().toISOString(),
-  };
-
-  requests.push(request);
+  });
 
   console.log("New waiter request:", request.id);
 
@@ -144,20 +148,23 @@ router.post("/", (req, res) => {
   });
 });
 
-router.get("/", (req, res) => {
-  const { restaurantId, status } = req.query;
+router.get("/", async (req, res) => {
+  const { restaurantId, tableNumber, status } = req.query;
+  const filter = {};
 
-  let results = [...requests];
-
-  if (restaurantId) {
-    results = results.filter(
-      (item) => item.restaurantId === restaurantId
-    );
+  if (typeof restaurantId === "string") {
+    filter.restaurantId = restaurantId.trim();
   }
 
-  if (status) {
-    results = results.filter((item) => item.status === status);
+  if (typeof tableNumber === "string") {
+    filter.tableNumber = tableNumber.trim();
   }
+
+  if (typeof status === "string") {
+    filter.status = status.trim();
+  }
+
+  const results = await Request.find(filter).sort({ createdAt: 1 });
 
   return res.json({
     success: true,
@@ -166,7 +173,7 @@ router.get("/", (req, res) => {
   });
 });
 
-router.post("/:id/accept", (req, res) => {
+router.post("/:id/accept", async (req, res) => {
   const { waiterId, waiterName } = req.body || {};
 
   if (
@@ -181,28 +188,41 @@ router.post("/:id/accept", (req, res) => {
     });
   }
 
-  const request = requests.find(
-    (item) => item.id === req.params.id
-  );
-
-  if (!request) {
+  if (!mongoose.isObjectIdOrHexString(req.params.id)) {
     return res.status(404).json({
       success: false,
       message: "Waiter request not found.",
     });
   }
 
-  if (request.status !== "pending") {
+  const request = await Request.findOneAndUpdate(
+    { _id: req.params.id, status: "pending" },
+    {
+      $set: {
+        status: "accepted",
+        waiterId: waiterId.trim(),
+        waiterName: waiterName.trim(),
+        acceptedAt: new Date(),
+      },
+    },
+    { returnDocument: "after", runValidators: true }
+  );
+
+  if (!request) {
+    const existingRequest = await Request.exists({ _id: req.params.id });
+
+    if (!existingRequest) {
+      return res.status(404).json({
+        success: false,
+        message: "Waiter request not found.",
+      });
+    }
+
     return res.status(409).json({
       success: false,
       message: "This request has already been accepted.",
     });
   }
-
-  request.status = "accepted";
-  request.waiterId = waiterId.trim();
-  request.waiterName = waiterName.trim();
-  request.acceptedAt = new Date().toISOString();
 
   return res.json({
     success: true,
