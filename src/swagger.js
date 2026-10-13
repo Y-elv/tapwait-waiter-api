@@ -16,7 +16,7 @@ const options = {
         description: "Local development server",
       },
        {
-        url: "http://localhost-Production-URL",
+        url: "https://tapwait-waiter-api.onrender.com",
         description: "Production server",
       }
     ],
