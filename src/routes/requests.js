@@ -139,7 +139,23 @@ router.post("/", async (req, res) => {
     tableNumber: String(tableNumber).trim(),
   });
 
+  const notification = {
+    id: request.id,
+    restaurantId: request.restaurantId,
+    tableNumber: request.tableNumber,
+    status: request.status,
+    createdAt: request.createdAt.toISOString(),
+  };
+
+  req.app
+    .get("io")
+    .to(`restaurant:${request.restaurantId}`)
+    .emit("new_waiter_request", notification);
+
   console.log("New waiter request:", request.id);
+  console.log(
+    `Notified waiters for restaurant ${request.restaurantId} about request ${request.id}`
+  );
 
   return res.status(201).json({
     success: true,
