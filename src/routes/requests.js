@@ -115,6 +115,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const Request = require("../models/Request");
+const Notification = require("../models/Notification");
 
 const router = express.Router();
 
@@ -139,6 +140,25 @@ router.post("/", async (req, res) => {
     tableNumber: String(tableNumber).trim(),
   });
 
+  let savedNotification;
+  try {
+    savedNotification = await Notification.create({
+      requestId: request._id,
+      restaurantId: request.restaurantId,
+      tableNumber: request.tableNumber,
+      status: request.status,
+    });
+  } catch (error) {
+    console.error(
+      `Failed to save notification for waiter request ${request.id}:`,
+      error
+    );
+    return res.status(500).json({
+      success: false,
+      message: "The request was created, but its notification could not be saved.",
+    });
+  }
+
   const notification = {
     id: request.id,
     restaurantId: request.restaurantId,
@@ -154,7 +174,7 @@ router.post("/", async (req, res) => {
 
   console.log("New waiter request:", request.id);
   console.log(
-    `Notified waiters for restaurant ${request.restaurantId} about request ${request.id}`
+    `Saved notification ${savedNotification.id} and notified waiters for restaurant ${request.restaurantId} about request ${request.id}`
   );
 
   return res.status(201).json({
