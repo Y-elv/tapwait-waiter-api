@@ -29,7 +29,13 @@ app.set("io", io);
 
 app.use(
   cors({
-    origin: "https://nobleza-menu.netlify.app",
+    origin: [
+      "https://nobleza-menu.netlify.app",
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:5173",
+    ]
   })
 );
 app.use(express.json());
