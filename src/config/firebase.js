@@ -3,15 +3,21 @@ const { initializeApp, getApps, cert } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 const path = require("node:path");
 
-const serviceAccountPath = path.join(
-  __dirname,
-  "..",
-  "..",
-  "private",
-  "firebase-service-account.json"
-);
+let serviceAccount;
 
-const serviceAccount = require(serviceAccountPath);
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  serviceAccount = JSON.parse(
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+  );
+} else {
+  serviceAccount = require(path.join(
+    __dirname,
+    "..",
+    "..",
+    "private",
+    "firebase-service-account.json"
+  ));
+}
 
 const app =
   getApps().length > 0
