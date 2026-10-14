@@ -1,4 +1,3 @@
-
 /**
  * @swagger
  * components:
@@ -118,6 +117,8 @@ const mongoose = require("mongoose");
 
 const Request = require("../models/Request");
 const Notification = require("../models/Notification");
+const WaiterDevice = require("../models/WaiterDevice");
+const { messaging } = require("../config/firebase");
 
 const router = express.Router();
 
@@ -178,6 +179,7 @@ router.post("/", async (req, res) => {
       createdAt: request.createdAt.toISOString(),
     };
 
+    // Notify connected waiter apps using Socket.IO.
     const io = req.app.get("io");
 
     if (io) {
@@ -188,6 +190,87 @@ router.post("/", async (req, res) => {
     } else {
       console.warn(
         "Socket.IO is not available; request was saved without a socket event."
+      );
+    }
+
+    // Send a push notification to registered Android devices
+    // belonging to this restaurant.
+    try {
+      const devices = await WaiterDevice.find({
+        restaurantId: request.restaurantId,
+        fcmToken: { $exists: true, $ne: "" },
+      }).select("fcmToken");
+
+      if (devices.length > 0) {
+        const tokens = [
+          ...new Set(
+            devices
+              .map((device) => device.fcmToken)
+              .filter(
+                (token) =>
+                  typeof token === "string" && token.trim().length > 0
+              )
+          ),
+        ];
+
+        if (tokens.length > 0) {
+          const result = await messaging.sendEachForMulticast({
+            tokens,
+            notification: {
+              title: "TapWait — Waiter Needed",
+              body: `A customer at table ${request.tableNumber} is calling a waiter.`,
+            },
+            data: {
+              type: "new_waiter_request",
+              requestId: request.id,
+              restaurantId: request.restaurantId,
+              tableNumber: request.tableNumber,
+            },
+            android: {
+              priority: "high",
+              notification: {
+                channelId: "tapwait_waiter_alerts",
+                sound: "default",
+                defaultVibrateTimings: true,
+              },
+            },
+          });
+
+          console.log(
+            `FCM request ${request.id}: ${result.successCount} sent, ${result.failureCount} failed.`
+          );
+
+          // Remove tokens rejected by FCM because they are no longer valid.
+          const invalidTokens = [];
+
+          result.responses.forEach((response, index) => {
+            if (
+              !response.success &&
+              [
+                "messaging/invalid-registration-token",
+                "messaging/registration-token-not-registered",
+              ].includes(response.error?.code)
+            ) {
+              invalidTokens.push(tokens[index]);
+            }
+          });
+
+          if (invalidTokens.length > 0) {
+            await WaiterDevice.deleteMany({
+              fcmToken: { $in: invalidTokens },
+            });
+          }
+        }
+      } else {
+        console.warn(
+          `No registered FCM devices found for restaurant ${request.restaurantId}.`
+        );
+      }
+    } catch (fcmError) {
+      // FCM failure must not cancel a request already saved in MongoDB.
+      console.error(
+        `FCM notification failed for request ${request.id}:`,
+        fcmError.message
       );
     }
 
@@ -342,7 +425,7 @@ router.post("/:id/accept", async (req, res) => {
     const io = req.app.get("io");
 
     if (io) {
-      // Notify the customer website and any connected restaurant clients.
+      // Notify the customer website and connected restaurant clients.
       io.to(`restaurant:${request.restaurantId}`).emit(
         "request_accepted",
         acceptedNotification
