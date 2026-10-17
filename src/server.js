@@ -41,6 +41,45 @@ app.use(
 );
 app.use(express.json());
 
+// whatsapp  integration route
+
+
+const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+
+// Meta uses this GET endpoint to verify your webhook.
+app.get("/webhooks/whatsapp", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (
+    mode === "subscribe" &&
+    typeof token === "string" &&
+    WHATSAPP_VERIFY_TOKEN &&
+    token === WHATSAPP_VERIFY_TOKEN &&
+    typeof challenge === "string"
+  ) {
+    console.log("WhatsApp webhook verified successfully.");
+    return res.status(200).type("text/plain").send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+// Receives WhatsApp webhook events.
+// Add signature validation before processing production events.
+app.post("/webhooks/whatsapp", (req, res) => {
+  if (req.body?.object !== "whatsapp_business_account") {
+    return res.sendStatus(404);
+  }
+
+  // Acknowledge the webhook without logging customer message contents.
+  console.log("WhatsApp webhook event received.");
+
+  return res.sendStatus(200);
+});
+
+
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.use("/api/requests", requestsRouter);
 app.use("/api/devices", devicesRouter);
