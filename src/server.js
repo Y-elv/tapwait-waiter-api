@@ -9,6 +9,7 @@ const swaggerDocument = require("./swagger");
 const requestsRouter = require("./routes/requests");
 const connectDatabase = require("./config/database");
 const devicesRouter = require("./routes/devices");  
+const menuBoostRouter = require("./routes/menuBoost");  
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +44,7 @@ app.use(express.json());
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.use("/api/requests", requestsRouter);
 app.use("/api/devices", devicesRouter);
+app.use("/api/menu-boost", menuBoostRouter);
 
 app.get("/", (req, res) => {
   res.send("TapWait API. Interactive documentation is available at /api-docs.");
