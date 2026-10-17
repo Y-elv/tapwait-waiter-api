@@ -658,7 +658,7 @@ router.post("/:id/send", async (req, res) => {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${WHATSAPP_VERIFY_TOKEN}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
