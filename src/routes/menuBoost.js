@@ -584,7 +584,7 @@ router.post("/:id/send", async (req, res) => {
     }
 
     const {
-      WHATSAPP_ACCESS_TOKEN,
+      WHATSAPP_VERIFY_TOKEN,
       WHATSAPP_PHONE_NUMBER_ID,
       WHATSAPP_API_VERSION,
       WHATSAPP_MARKETING_TEMPLATE_NAME,
