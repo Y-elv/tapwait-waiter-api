@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -8,21 +9,24 @@ const swaggerUi = require("swagger-ui-express");
 const swaggerDocument = require("./swagger");
 const requestsRouter = require("./routes/requests");
 const connectDatabase = require("./config/database");
-const devicesRouter = require("./routes/devices");  
-const menuBoostRouter = require("./routes/menuBoost");  
-
+const devicesRouter = require("./routes/devices");
+const menuBoostRouter = require("./routes/menuBoost");
+const campaignGuardRouter = require("./routes/campaignGuard");
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const httpServer = http.createServer(app);
+
+const allowedOrigins = [
+  "https://nobleza-menu.netlify.app",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+];
+
 const io = new Server(httpServer, {
   cors: {
-    origin: [
-      "https://nobleza-menu.netlify.app",
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:5173",
-    ],
+    origin: allowedOrigins,
   },
 });
 
@@ -30,64 +34,173 @@ app.set("io", io);
 
 app.use(
   cors({
-    origin: [
-      "https://nobleza-menu.netlify.app",
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:5173",
-    ]
+    origin: allowedOrigins,
   })
 );
+
 app.use(express.json());
 
-// whatsapp  integration route
+// ============================================
+// WHATSAPP CLOUD API CONNECTION TEST
+// GET /api/whatsapp/status
+// ============================================
 
+app.get("/api/whatsapp/status", async (req, res) => {
+  const {
+    WHATSAPP_ACCESS_TOKEN,
+    WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_API_VERSION,
+  } = process.env;
 
-const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+  const missing = [];
 
-// Meta uses this GET endpoint to verify your webhook.
+  if (!WHATSAPP_ACCESS_TOKEN) {
+    missing.push("WHATSAPP_ACCESS_TOKEN");
+  }
+
+  if (!WHATSAPP_PHONE_NUMBER_ID) {
+    missing.push("WHATSAPP_PHONE_NUMBER_ID");
+  }
+
+  if (!WHATSAPP_API_VERSION) {
+    missing.push("WHATSAPP_API_VERSION");
+  }
+
+  if (missing.length > 0) {
+    console.error("WhatsApp configuration is incomplete:", missing);
+
+    return res.status(503).json({
+      success: false,
+      connected: false,
+      message: "WhatsApp Cloud API environment variables are missing.",
+      missing,
+    });
+  }
+
+  try {
+    const endpoint =
+      `https://graph.facebook.com/${WHATSAPP_API_VERSION}/` +
+      `${WHATSAPP_PHONE_NUMBER_ID}` +
+      "?fields=id,display_phone_number,verified_name";
+
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("WhatsApp connection check failed:", {
+        httpStatus: response.status,
+        errorCode: data.error?.code,
+        error: data.error?.message,
+      });
+
+      return res.status(502).json({
+        success: false,
+        connected: false,
+        message: "Meta rejected the WhatsApp API request.",
+        error: data.error?.message || "Unknown Meta API error.",
+        code: data.error?.code,
+      });
+    }
+
+    console.log("WhatsApp Cloud API connection verified:", {
+      phoneNumberId: data.id,
+      displayPhoneNumber: data.display_phone_number,
+      verifiedName: data.verified_name,
+    });
+
+    return res.status(200).json({
+      success: true,
+      connected: true,
+      message: "WhatsApp Cloud API connection is working.",
+      data: {
+        phoneNumberId: data.id,
+        displayPhoneNumber: data.display_phone_number,
+        verifiedName: data.verified_name,
+      },
+    });
+  } catch (error) {
+    console.error("WhatsApp API connection error:", error.message);
+
+    return res.status(502).json({
+      success: false,
+      connected: false,
+      message: "Unable to reach the WhatsApp Cloud API.",
+    });
+  }
+});
+
+// ============================================
+// WHATSAPP WEBHOOK VERIFICATION
+// GET /webhooks/whatsapp
+// ============================================
+
 app.get("/webhooks/whatsapp", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
+  const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+
   if (
     mode === "subscribe" &&
     typeof token === "string" &&
-    WHATSAPP_VERIFY_TOKEN &&
-    token === WHATSAPP_VERIFY_TOKEN &&
-    typeof challenge === "string"
+    typeof challenge === "string" &&
+    verifyToken &&
+    token === verifyToken
   ) {
     console.log("WhatsApp webhook verified successfully.");
+
     return res.status(200).type("text/plain").send(challenge);
   }
+
+  console.warn("WhatsApp webhook verification failed.");
 
   return res.sendStatus(403);
 });
 
-// Receives WhatsApp webhook events.
-// Add signature validation before processing production events.
+// ============================================
+// WHATSAPP WEBHOOK EVENTS
+// POST /webhooks/whatsapp
+// ============================================
+
 app.post("/webhooks/whatsapp", (req, res) => {
   if (req.body?.object !== "whatsapp_business_account") {
     return res.sendStatus(404);
   }
 
-  // Acknowledge the webhook without logging customer message contents.
+  // Acknowledge events without logging message contents.
   console.log("WhatsApp webhook event received.");
 
   return res.sendStatus(200);
 });
 
+// ============================================
+// EXISTING API ROUTES
+// ============================================
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
 app.use("/api/requests", requestsRouter);
 app.use("/api/devices", devicesRouter);
 app.use("/api/menu-boost", menuBoostRouter);
+app.use("/api/campaign-guard", campaignGuardRouter);
 
 app.get("/", (req, res) => {
-  res.send("TapWait API. Interactive documentation is available at /api-docs.");
+  res.send(
+    "TapWait API. Interactive documentation is available at /api-docs."
+  );
 });
+
+// ============================================
+// SOCKET.IO CONNECTIONS
+// ============================================
 
 io.engine.on("connection_error", (error) => {
   console.error("Socket connection error:", error.message);
@@ -105,11 +218,15 @@ io.on("connection", (socket) => {
       }
     };
 
-    if (typeof restaurantId !== "string" || !restaurantId.trim()) {
+    if (
+      typeof restaurantId !== "string" ||
+      !restaurantId.trim()
+    ) {
       respond({
         success: false,
         message: "A non-empty restaurantId is required.",
       });
+
       return;
     }
 
@@ -117,15 +234,21 @@ io.on("connection", (socket) => {
 
     try {
       await socket.join(`restaurant:${normalizedRestaurantId}`);
+
       console.log(
         `Socket ${socket.id} joined restaurant ${normalizedRestaurantId}`
       );
-      respond({ success: true, restaurantId: normalizedRestaurantId });
+
+      respond({
+        success: true,
+        restaurantId: normalizedRestaurantId,
+      });
     } catch (error) {
       console.error(
         `Socket ${socket.id} failed to join a restaurant room:`,
         error
       );
+
       respond({
         success: false,
         message: "Unable to join the restaurant room.",
@@ -138,9 +261,15 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", (reason) => {
-    console.log(`Socket disconnected: ${socket.id} (${reason})`);
+    console.log(
+      `Socket disconnected: ${socket.id} (${reason})`
+    );
   });
 });
+
+// ============================================
+// START SERVER
+// ============================================
 
 async function startServer() {
   try {
@@ -153,10 +282,13 @@ async function startServer() {
 
   httpServer.listen(PORT, () => {
     console.log("--------------------------------");
-    console.log("🗄️ Database connected successfully!");
-    console.log("🚀 Server started successfully!");
-    console.log(`🌐 Documentation Api: http://localhost:${PORT}/api-docs`);
-    console.log(`🔗 URL: http://localhost:${PORT}`);
+    console.log("Database connected successfully!");
+    console.log("TapWait API server started successfully!");
+    console.log(`API documentation: http://localhost:${PORT}/api-docs`);
+    console.log(`Server URL: http://localhost:${PORT}`);
+    console.log(
+      `WhatsApp connection test: http://localhost:${PORT}/api/whatsapp/status`
+    );
     console.log("--------------------------------");
   });
 }
