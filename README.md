@@ -281,10 +281,5 @@ TapWait AI is an evolving restaurant management and marketing platform. Some int
 
 The project documentation distinguishes existing backend capabilities from experimental AI integrations and planned improvements.
 
-## License
-
-Add your chosen open-source license before publishing the repository for external reuse or contributions.
-
----
 
 **TapWait AI: Better restaurant management. More responsive service. Smarter marketing.**
