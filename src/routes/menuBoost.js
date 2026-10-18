@@ -584,7 +584,7 @@ router.post("/:id/send", async (req, res) => {
     }
 
     const {
-      WHATSAPP_VERIFY_TOKEN,
+      WHATSAPP_ACCESS_TOKEN,
       WHATSAPP_PHONE_NUMBER_ID,
       WHATSAPP_API_VERSION,
       WHATSAPP_MARKETING_TEMPLATE_NAME,
@@ -592,7 +592,7 @@ router.post("/:id/send", async (req, res) => {
     } = process.env;
 
     if (
-      !WHATSAPP_VERIFY_TOKEN||
+      !WHATSAPP_ACCESS_TOKEN||
       !WHATSAPP_PHONE_NUMBER_ID ||
       !WHATSAPP_API_VERSION ||
       !WHATSAPP_MARKETING_TEMPLATE_NAME
@@ -658,7 +658,7 @@ router.post("/:id/send", async (req, res) => {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${WHATSAPP_VERIFY_TOKEN}`,
+          Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
