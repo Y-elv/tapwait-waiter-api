@@ -13,6 +13,8 @@ const devicesRouter = require("./routes/devices");
 const menuBoostRouter = require("./routes/menuBoost");
 const campaignGuardRouter = require("./routes/campaignGuard");
 const deviceNotificationRoutes = require("./routes/deviceNotificationRoutes");
+const contactsRouter = require("./routes/contacts");
+const callEventsRouter = require("./routes/callEvents");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -194,6 +196,8 @@ app.use("/api/devices", devicesRouter);
 app.use("/api/menu-boost", menuBoostRouter);
 app.use("/api/campaign-guard", campaignGuardRouter);
 app.use("/api/device-notifications", deviceNotificationRoutes);
+app.use("/api/contacts", contactsRouter);
+app.use("/api/call-events", callEventsRouter);
 
 app.get("/", (req, res) => {
   res.send(
