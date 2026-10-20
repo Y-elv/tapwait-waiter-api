@@ -1,5 +1,6 @@
 
 const express = require("express");
+const mongoose = require("mongoose");
 const WaiterDevice = require("../models/WaiterDevice");
 const DeviceContact = require("../models/DeviceContact");
 
@@ -9,22 +10,149 @@ const escapeRegex = (value) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
- * POST /api/contacts/sync
- * Upload contacts from a registered device.
+ * @swagger
+ * tags:
+ *   name: Device Contacts
+ *   description: Contacts synced from registered Android devices
+ */
+
+/**
+ * @swagger
+ * /api/contacts/sync:
+ *   post:
+ *     summary: Sync device contacts
+ *     tags: [Device Contacts]
+ *     description: Upload up to 1000 contacts per request. Contacts are inserted or updated using deviceId and localContactId.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - deviceId
+ *               - deviceName
+ *               - contacts
+ *             properties:
+ *               deviceId:
+ *                 type: string
+ *                 example: device-001
+ *               deviceName:
+ *                 type: string
+ *                 example: Waiter Phone 1
+ *               contacts:
+ *                 type: array
+ *                 maxItems: 1000
+ *                 items:
+ *                   type: object
+ *                   required:
+ *                     - localContactId
+ *                   properties:
+ *                     localContactId:
+ *                       type: string
+ *                       example: "123"
+ *                     displayName:
+ *                       type: string
+ *                       example: Jane Doe
+ *                     phoneNumbers:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["+250788123456"]
+ *                     emails:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["jane@example.com"]
+ *     responses:
+ *       200:
+ *         description: Contacts synced successfully
+ *       400:
+ *         description: Invalid request or contact data
+ *       403:
+ *         description: Device is not registered
+ *       413:
+ *         description: Request contains too many contacts
+ *       500:
+ *         description: Failed to sync contacts
  *
- * Body:
- * {
- *   "deviceId": "...",
- *   "deviceName": "...",
- *   "contacts": [
- *     {
- *       "localContactId": "123",
- *       "displayName": "Jane Doe",
- *       "phoneNumbers": ["+2507..."],
- *       "emails": ["jane@example.com"]
- *     }
- *   ]
- * }
+ * /api/contacts:
+ *   get:
+ *     summary: Retrieve and filter device contacts
+ *     tags: [Device Contacts]
+ *     parameters:
+ *       - in: query
+ *         name: deviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         example: device-001
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search contact names, phone numbers, or emails
+ *         example: Jane
+ *       - in: query
+ *         name: hasPhone
+ *         schema:
+ *           type: boolean
+ *         description: Filter contacts by presence of phone numbers
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 50
+ *     responses:
+ *       200:
+ *         description: Contacts retrieved successfully
+ *       400:
+ *         description: deviceId is missing
+ *       403:
+ *         description: Device is not registered
+ *       500:
+ *         description: Failed to retrieve contacts
+ *
+ * /api/contacts/{contactId}:
+ *   delete:
+ *     summary: Delete a synced contact
+ *     tags: [Device Contacts]
+ *     parameters:
+ *       - in: path
+ *         name: contactId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MongoDB contact document ID
+ *       - in: query
+ *         name: deviceId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Registered device ID
+ *     responses:
+ *       200:
+ *         description: Contact deleted successfully
+ *       400:
+ *         description: Invalid contact ID or missing deviceId
+ *       403:
+ *         description: Device is not registered
+ *       404:
+ *         description: Contact not found for this device
+ *       500:
+ *         description: Failed to delete contact
+ */
+
+/**
+ * POST /api/contacts/sync
  */
 router.post("/sync", async (req, res) => {
   try {
@@ -43,7 +171,6 @@ router.post("/sync", async (req, res) => {
       });
     }
 
-    // Keep requests manageable. Upload larger address books in batches.
     if (contacts.length > 1000) {
       return res.status(413).json({
         success: false,
@@ -51,7 +178,9 @@ router.post("/sync", async (req, res) => {
       });
     }
 
-    const device = await WaiterDevice.findById(deviceId.trim());
+    const normalizedDeviceId = deviceId.trim();
+
+    const device = await WaiterDevice.findById(normalizedDeviceId);
 
     if (!device) {
       return res.status(403).json({
@@ -61,6 +190,7 @@ router.post("/sync", async (req, res) => {
     }
 
     const operations = [];
+    const seenIds = new Set();
 
     for (const contact of contacts) {
       if (
@@ -74,14 +204,25 @@ router.post("/sync", async (req, res) => {
         });
       }
 
+      const localContactId = contact.localContactId.trim();
+
+      if (seenIds.has(localContactId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Duplicate localContactId in the same request.",
+        });
+      }
+
+      seenIds.add(localContactId);
+
       const phoneNumbers = contact.phoneNumbers ?? [];
       const emails = contact.emails ?? [];
 
       if (
         !Array.isArray(phoneNumbers) ||
         !Array.isArray(emails) ||
-        !phoneNumbers.every((v) => typeof v === "string") ||
-        !emails.every((v) => typeof v === "string")
+        !phoneNumbers.every((value) => typeof value === "string") ||
+        !emails.every((value) => typeof value === "string")
       ) {
         return res.status(400).json({
           success: false,
@@ -89,11 +230,21 @@ router.post("/sync", async (req, res) => {
         });
       }
 
+      if (
+        phoneNumbers.some((value) => value.length > 100) ||
+        emails.some((value) => value.length > 254)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "A phone number or email address is too long.",
+        });
+      }
+
       operations.push({
         updateOne: {
           filter: {
-            deviceId: deviceId.trim(),
-            localContactId: contact.localContactId.trim(),
+            deviceId: normalizedDeviceId,
+            localContactId,
           },
           update: {
             $set: {
@@ -102,8 +253,16 @@ router.post("/sync", async (req, res) => {
                 typeof contact.displayName === "string"
                   ? contact.displayName.trim().slice(0, 200)
                   : "",
-              phoneNumbers: [...new Set(phoneNumbers.map((v) => v.trim()).filter(Boolean))],
-              emails: [...new Set(emails.map((v) => v.trim()).filter(Boolean))],
+              phoneNumbers: [
+                ...new Set(
+                  phoneNumbers.map((value) => value.trim()).filter(Boolean)
+                ),
+              ],
+              emails: [
+                ...new Set(
+                  emails.map((value) => value.trim()).filter(Boolean)
+                ),
+              ],
               syncedAt: new Date(),
             },
           },
@@ -125,6 +284,7 @@ router.post("/sync", async (req, res) => {
     });
   } catch (error) {
     console.error("Contact sync failed:", error.message);
+
     return res.status(500).json({
       success: false,
       message: "Failed to sync contacts.",
@@ -133,20 +293,17 @@ router.post("/sync", async (req, res) => {
 });
 
 /**
- * GET /api/contacts?deviceId=...
- * Optional filters:
- * search=Jane
- * hasPhone=true
- * limit=50
- * page=1
+ * GET /api/contacts
  */
 router.get("/", async (req, res) => {
   try {
     const { deviceId, search, hasPhone } = req.query;
+
     const limit = Math.min(
       Math.max(parseInt(req.query.limit, 10) || 50, 1),
       100
     );
+
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
 
     if (typeof deviceId !== "string" || !deviceId.trim()) {
@@ -156,7 +313,9 @@ router.get("/", async (req, res) => {
       });
     }
 
-    const device = await WaiterDevice.findById(deviceId.trim());
+    const normalizedDeviceId = deviceId.trim();
+
+    const device = await WaiterDevice.findById(normalizedDeviceId);
 
     if (!device) {
       return res.status(403).json({
@@ -165,7 +324,7 @@ router.get("/", async (req, res) => {
       });
     }
 
-    const filter = { deviceId: deviceId.trim() };
+    const filter = { deviceId: normalizedDeviceId };
 
     if (typeof search === "string" && search.trim()) {
       const pattern = new RegExp(escapeRegex(search.trim()), "i");
@@ -212,6 +371,7 @@ router.get("/", async (req, res) => {
     });
   } catch (error) {
     console.error("Contact retrieval failed:", error.message);
+
     return res.status(500).json({
       success: false,
       message: "Failed to retrieve contacts.",
@@ -220,7 +380,7 @@ router.get("/", async (req, res) => {
 });
 
 /**
- * DELETE /api/contacts/:contactId?deviceId=...
+ * DELETE /api/contacts/:contactId
  */
 router.delete("/:contactId", async (req, res) => {
   try {
@@ -233,7 +393,9 @@ router.delete("/:contactId", async (req, res) => {
       });
     }
 
-    const device = await WaiterDevice.findById(deviceId.trim());
+    const normalizedDeviceId = deviceId.trim();
+
+    const device = await WaiterDevice.findById(normalizedDeviceId);
 
     if (!device) {
       return res.status(403).json({
@@ -242,9 +404,16 @@ router.delete("/:contactId", async (req, res) => {
       });
     }
 
+    if (!mongoose.isValidObjectId(req.params.contactId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid contact ID.",
+      });
+    }
+
     const deleted = await DeviceContact.findOneAndDelete({
       _id: req.params.contactId,
-      deviceId: deviceId.trim(),
+      deviceId: normalizedDeviceId,
     });
 
     if (!deleted) {
@@ -259,14 +428,8 @@ router.delete("/:contactId", async (req, res) => {
       message: "Contact deleted.",
     });
   } catch (error) {
-    if (error.name === "CastError") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid contact ID.",
-      });
-    }
-
     console.error("Contact deletion failed:", error.message);
+
     return res.status(500).json({
       success: false,
       message: "Failed to delete contact.",
